@@ -1,0 +1,155 @@
+============================================================
+  SISTEMA DE ASISTENCIA UMG - Guía de Instalación XAMPP
+============================================================
+
+REQUISITOS:
+  - XAMPP instalado (Apache + MySQL)
+  - PHP 7.4 o superior
+  - Navegador moderno (Chrome recomendado para cámara)
+
+------------------------------------------------------------
+PASO 1 - Copiar archivos
+------------------------------------------------------------
+Copia la carpeta "proyecto_umg" completa dentro de:
+  C:\xampp\htdocs\proyecto_umg\
+
+La estructura debe quedar así:
+  C:\xampp\htdocs\proyecto_umg\
+    ├── config.php
+    ├── login.php
+    ├── auth.php
+    ├── logout.php
+    ├── menu_admin.php
+    ├── menu_catedratico.php
+    ├── registro_estudiante.php
+    ├── guardar_estudiante.php
+    ├── gestionar_usuarios.php
+    ├── gestionar_cursos.php
+    ├── lector_qr.php
+    ├── reportes_asistencia.php
+    ├── asistencia_api.php
+    ├── generar_pdf.php
+    ├── database.sql
+    └── fotos/           ← Se crea automáticamente
+
+------------------------------------------------------------
+PASO 2 - Crear la base de datos
+------------------------------------------------------------
+1. Abre tu navegador y ve a: http://localhost/phpmyadmin
+2. Haz clic en la pestaña "SQL" (arriba)
+3. Abre el archivo "database.sql" con el Bloc de notas
+4. Copia todo el contenido y pégalo en phpMyAdmin
+5. Haz clic en "Continuar" o "Ejecutar"
+
+Esto crea la base de datos "umg_asistencia" con todas las
+tablas y un usuario administrador por defecto.
+
+------------------------------------------------------------
+PASO 3 - Instalar TCPDF (para generar PDF)
+------------------------------------------------------------
+Opción A - Descarga manual (recomendada):
+  1. Ve a: https://github.com/tecnickcom/tcpdf/releases
+  2. Descarga la última versión (tcpdf-X.X.X.zip)
+  3. Extrae y renombra la carpeta a "tcpdf"
+  4. Colócala en: C:\xampp\htdocs\proyecto_umg\tcpdf\
+  5. Verifica que exista: proyecto_umg\tcpdf\tcpdf.php
+
+Opción B - Sin PDF (temporal):
+  Si no instalas TCPDF, todo funciona excepto "Generar PDF".
+  El botón mostrará un error, pero lo demás funciona normal.
+
+------------------------------------------------------------
+PASO 4 - Instalar PHPMailer (para envío de correos)
+------------------------------------------------------------
+Solo si quieres enviar correos de confirmación al registrar.
+Es OPCIONAL - el sistema funciona sin esto.
+
+  1. Descarga PHPMailer: https://github.com/PHPMailer/PHPMailer
+     (botón verde "Code" → Download ZIP)
+  2. Extrae el ZIP
+  3. Crea la carpeta: proyecto_umg\vendor\phpmailer\phpmailer\
+  4. Copia dentro los archivos .php de la carpeta "src\"
+  5. Crea el archivo: proyecto_umg\vendor\autoload.php
+     con el contenido de autoload_ejemplo.php (incluido abajo)
+
+  Si no instalas PHPMailer, el registro igual guarda al
+  estudiante, solo no envía correo.
+
+------------------------------------------------------------
+PASO 5 - Verificar configuración
+------------------------------------------------------------
+Abre config.php y confirma que tenga:
+
+  define('DB_HOST', 'localhost');
+  define('DB_USER', 'root');
+  define('DB_PASS', 'roo123');       ← tu contraseña
+  define('DB_NAME', 'umg_asistencia');
+  define('BASE_URL', 'http://localhost/proyecto_umg');
+
+Si tu contraseña de MySQL es diferente, cámbiala aquí.
+
+------------------------------------------------------------
+PASO 6 - Acceder al sistema
+------------------------------------------------------------
+Abre tu navegador y ve a:
+  http://localhost/proyecto_umg/login.php
+
+Credenciales por defecto:
+  Usuario:    admin
+  Contraseña: admin123
+
+¡Importante! Crea un nuevo usuario administrador desde
+"Gestión de Usuarios" y elimina el usuario "admin" por
+seguridad.
+
+------------------------------------------------------------
+NOTAS IMPORTANTES
+------------------------------------------------------------
+• La cámara solo funciona en HTTP en localhost.
+  En producción necesitas HTTPS.
+
+• Para el lector QR, Chrome es el navegador más compatible.
+
+• Las fotos se guardan en: proyecto_umg/fotos/
+  Asegúrate de que esa carpeta tenga permisos de escritura
+  (en XAMPP normalmente funciona sin hacer nada).
+
+• Si tienes error de conexión a BD, abre XAMPP Control Panel
+  y asegúrate de que MySQL esté corriendo (botón Start).
+
+------------------------------------------------------------
+ESTRUCTURA DE ARCHIVOS
+------------------------------------------------------------
+config.php            → Configuración central (BD, rutas)
+login.php             → Página de inicio de sesión
+auth.php              → Procesa el login (API JSON)
+logout.php            → Cierra la sesión
+menu_admin.php        → Panel del Administrador
+menu_catedratico.php  → Panel del Catedrático
+registro_estudiante.php → Formulario registro con cámara
+guardar_estudiante.php  → Guarda estudiante en BD + correo
+gestionar_usuarios.php  → Crear/eliminar usuarios del sistema
+gestionar_cursos.php    → Crear/ver cursos y asignar catedrático
+lector_qr.php           → Escáner QR para tomar asistencia
+reportes_asistencia.php → Lista asistencia + confirmar + PDF
+asistencia_api.php      → API REST de asistencias
+generar_pdf.php         → Genera PDF de asistencia (TCPDF)
+database.sql            → Script para crear la base de datos
+
+------------------------------------------------------------
+¿PROBLEMAS?
+------------------------------------------------------------
+Error "Access denied for user root":
+  → Verifica la contraseña en config.php
+
+Error "No se pudo acceder a la cámara":
+  → Usa Chrome y asegúrate de estar en localhost (no IP)
+
+Error "TCPDF no encontrado":
+  → Instala TCPDF como se indica en el Paso 3
+
+Página en blanco:
+  → Activa los errores PHP: en config.php agrega al inicio:
+    ini_set('display_errors', 1);
+    error_reporting(E_ALL);
+============================================================
