@@ -1,14 +1,28 @@
 <?php
 session_start();
-include 'mascota.php';
+
 // Si ya tiene sesión activa, redirigir según rol
-if (isset($_SESSION['usuario'])) {
-    if ($_SESSION['rol'] === 'Administrador') {
-        header("Location: menu_admin.php");
-    } else {
-        header("Location: menu_catedratico.php");
+if (isset($_SESSION['usuario_id'])) {
+
+    switch ($_SESSION['rol']) {
+
+        case 1:
+            header("Location: menu_admin.php");
+            exit();
+
+        case 2:
+            header("Location: menu_estudiante.php");
+            exit();
+
+        case 3:
+            header("Location: menu_catedratico.php");
+            exit();
+
+        default:
+            session_destroy();
+            header("Location: login.php");
+            exit();
     }
-    exit();
 }
 ?>
 <!DOCTYPE html>
@@ -130,7 +144,7 @@ if (isset($_SESSION['usuario'])) {
                 <label for="usuario">Usuario</label>
                 <div class="input-wrapper">
                     <i class="fas fa-user"></i>
-                    <input type="text" id="usuario" name="nombre_usuario" placeholder="Ingresa tu usuario" required>
+                    <input type="email" id="correo" name="correo" placeholder="Ingresa tu correo" required>
                 </div>
             </div>
             <div class="form-group">

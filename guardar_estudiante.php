@@ -1,117 +1,127 @@
 <?php
-
 session_start();
-
 require_once 'config.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
-ob_start();
-
-ini_set('log_errors', 1);
-ini_set('error_log', __DIR__ . '/error.log');
-
 try {
+    // Limpiar cualquier salida previa
+    if (ob_get_length()) {
+        ob_clean();
+    }
 
-    // =========================
-    // VALIDAR SESIÓN
-    // =========================
-    requireSession('Administrador');
+    // Verificar la sesión del administrador
+    requireSession(1);
 
     $pdo = getDB();
+
+    // Sanitización y captura de datos POST
+    $nombre    = trim($_POST['nombre'] ?? '');
+    $apellidos = trim($_POST['apellidos'] ?? '');
+    $correo    = trim($_POST['correo'] ?? '');
+    $telefono  = trim($_POST['telefono'] ?? '');
+    $carrera   = trim($_POST['carrera'] ?? '');
+    $semestre  = (int)($_POST['semestre'] ?? 0);
+    $seccion   = trim($_POST['seccion'] ?? '');
+    $fotoB64   = $_POST['foto'] ?? '';
+
+    // 1. Validación de campos obligatorios
+    if (!$nombre || !$apellidos || !$correo || !$carrera || !$semestre || !$seccion || !$fotoB64) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Todos los campos son obligatorios.'
+        ]);
+        exit;
+    }
+
+    // =================================================================
+    // VALIDADOR DE DOMINIO INSTITUCIONAL OBLIGATORIO (@miumg.edu.gt)
+    // =================================================================
+    // Pasamos el correo a minúsculas para evitar evasiones tipo @Miumg.Edu.Gt
+    $correoMinusculas = strtolower($correo);
+    if (!str_ends_with($correoMinusculas, '@miumg.edu.gt')) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Acceso denegado: El correo electrónico debe pertenecer obligatoriamente al dominio institucional @miumg.edu.gt'
+        ]);
+        exit;
+    }
+    // =================================================================
+
+    // Directorio de almacenamiento para las fotos
+    $fotosDir = __DIR__ . '/fotos/';
+    if (!is_dir($fotosDir)) {
+        if (!mkdir($fotosDir, 0755, true)) {
+            throw new Exception("No se pudo crear el directorio de fotos. Verifique permisos.");
+        }
+    }
+
+    // Procesamiento y decodificación de la imagen Base64
+    if (strpos($fotoB64, ',') === false) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'El formato de la foto no incluye la cabecera Data URL.'
+        ]);
+        exit;
+    }
+
+    $parts = explode(',', $fotoB64);
+    if (count($parts) !== 2) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Formato de foto inválido.'
+        ]);
+        exit;
+    }
+
+    // Reemplazar espacios por signos '+' que se dañan en la transmisión HTTP regular
+    $base64Data = str_replace(' ', '+', $parts[1]);
+    $fotoData = base64_decode($base64Data, true);
+    
+    if ($fotoData === false) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Error al decodificar los datos binarios de la foto.'
+        ]);
+        exit;
+    }
+
+    // Generar nombre único para el archivo físico
+    $nombreFoto = 'foto_' . uniqid('', true) . '.jpg';
+    $rutaFoto   = 'fotos/' . $nombreFoto;
+
+    // Guardar archivo
+    $resultadoEscritura = file_put_contents($fotosDir . $nombreFoto, $fotoData);
+    if ($resultadoEscritura === false) {
+        throw new Exception("Error del sistema al escribir el archivo de imagen en el disco.");
+    }
+
+    // =================================================================
+    // GENERACIÓN DE CONTRASEÑA AUTOMÁTICA Y VERIFICACIÓN
+    // =================================================================
+    $passwordTextoPlano = $telefono; 
+    $passwordEncriptada = password_hash($passwordTextoPlano, PASSWORD_DEFAULT);
+    $checkCorreo = $pdo->prepare("SELECT id FROM usuarios WHERE correo = ?");
+    $checkCorreo->execute([$correo]);
+    
+    if ($checkCorreo->fetch()) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'El correo electrónico ya se encuentra registrado en el sistema.'
+        ]);
+        exit;
+    }
+
+    // Iniciar transacción para asegurar consistencia atómica entre tablas
     $pdo->beginTransaction();
 
-    // =========================
-    // DATOS
-    // =========================
-    $nombre     = trim($_POST['nombre'] ?? '');
-    $apellidos  = trim($_POST['apellidos'] ?? '');
-    $correo     = trim($_POST['correo'] ?? '');
-    $telefono   = trim($_POST['telefono'] ?? '');
-    $carrera    = trim($_POST['carrera'] ?? '');
-    $semestre   = trim($_POST['semestre'] ?? '');
-    $seccion    = trim($_POST['seccion'] ?? '');
-    $fotoB64    = $_POST['foto'] ?? '';
-
-    // =========================
-    // VALIDACIÓN CAMPOS
-    // =========================
-    if (
-        !$nombre || !$apellidos || !$correo || !$telefono ||
-        !$carrera || !$semestre || !$seccion || !$fotoB64
-    ) {
-        throw new Exception("Todos los campos son obligatorios");
-    }
-
-    if (!filter_var($correo, FILTER_VALIDATE_EMAIL)) {
-        throw new Exception("Correo inválido");
-    }
-
-    if (!preg_match('/^[0-9+\-\s]+$/', $telefono)) {
-        throw new Exception("Teléfono inválido");
-    }
-
-    // =========================
-    // DUPLICADO EMAIL
-    // =========================
-    $stmt = $pdo->prepare("SELECT id FROM usuarios WHERE correo = ?");
-    $stmt->execute([$correo]);
-
-    if ($stmt->fetch()) {
-        throw new Exception("El correo ya está registrado");
-    }
-
-    // =========================
-    // CARPETA FOTOS
-    // =========================
-    $dirFotos = __DIR__ . '/fotos/';
-    if (!is_dir($dirFotos)) {
-        mkdir($dirFotos, 0755, true);
-    }
-
-    // =========================
-    // PROCESAR IMAGEN BASE64
-    // =========================
-    $img = explode(',', $fotoB64);
-
-    if (!isset($img[1])) {
-        throw new Exception("Imagen inválida");
-    }
-
-    $dataImg = base64_decode($img[1]);
-
-    if ($dataImg === false) {
-        throw new Exception("Error procesando imagen");
-    }
-
-    // MIME VALIDATION
-    $finfo = finfo_open();
-    $mime = finfo_buffer($finfo, $dataImg, FILEINFO_MIME_TYPE);
-    finfo_close($finfo);
-
-    $permitidos = ['image/jpeg', 'image/png'];
-
-    if (!in_array($mime, $permitidos)) {
-        throw new Exception("Formato de imagen no permitido");
-    }
-
-    // EXTENSIÓN DINÁMICA
-    $ext = ($mime === 'image/png') ? 'png' : 'jpg';
-
-    $fotoName = 'foto_' . bin2hex(random_bytes(8)) . '.' . $ext;
-
-    file_put_contents($dirFotos . $fotoName, $dataImg);
-
-    $fotoPath = 'fotos/' . $fotoName;
-
-    // =========================
-    // INSERTAR USUARIO
-    // =========================
+    // =================================================================
+    // REGISTRO DEL ESTUDIANTE CON ROL ASIGNADO (rol_id = 2)
+    // =================================================================
     $stmt = $pdo->prepare("
-        INSERT INTO usuarios
-        (nombre, apellidos, correo, telefono, carrera, semestre, seccion, foto)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        RETURNING id
+        INSERT INTO usuarios 
+        (nombre, apellidos, correo, telefono, carrera, semestre, seccion, foto, password, rol_id) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
 
     $stmt->execute([
@@ -122,113 +132,123 @@ try {
         $carrera,
         $semestre,
         $seccion,
-        $fotoPath
+        $rutaFoto,
+        $passwordEncriptada,
+        2 // Forzar rol estudiante
     ]);
 
-    $id = $stmt->fetchColumn();
+    $newId = $pdo->lastInsertId();
 
-    if (!$id) {
-        throw new Exception("No se pudo obtener el ID del usuario");
-    }
+    // =================================================================
+    // GENERACIÓN REAL DE HASH CORREGIDO PARA EXAMEN UMG (SHA-256 EXACTO)
+    // =================================================================
+    $hashCertificado = hash('sha256', 'UMG_CERT_' . $newId . '_' . $correo . '_' . time());
 
-    // =========================
-    // HASH CERTIFICADO
-    // =========================
-    $hashCertificado = hash(
-        'sha256',
-        $id . $nombre . $apellidos . $correo . microtime(true)
-    );
-
-    // =========================
-    // INSERTAR CERTIFICADO
-    // =========================
+    // =================================================================
+    // INSERTAR EL REGISTRO DEL CERTIFICADO DE UNA VEZ EN LA BASE DE DATOS
+    // =================================================================
     $stmtCert = $pdo->prepare("
-        INSERT INTO certificados
-        (usuario_id, hash_certificado, estado, fecha_emision)
+        INSERT INTO certificados (usuario_id, hash_certificado, estado, fecha_emision)
         VALUES (?, ?, 'VALIDO', NOW())
     ");
+    $stmtCert->execute([$newId, $hashCertificado]);
 
-    $stmtCert->execute([$id, $hashCertificado]);
-
-    // =========================
-    // COMMIT
-    // =========================
+    // Confirmar inserciones concurrentes
     $pdo->commit();
 
-    // =========================
-    // JOB PARA WORKER PDF
-    // =========================
-    $jobDir = __DIR__ . '/jobs_pdf/';
-    if (!is_dir($jobDir)) {
-        mkdir($jobDir, 0755, true);
-    }
+    $correoOk = false;
+    session_write_close();
 
-    $jobData = [
-        'id' => $id,
-        'nombre' => $nombre,
-        'apellidos' => $apellidos,
-        'correo' => $correo,
-        'telefono' => $telefono,
-        'carrera' => $carrera,
-        'semestre' => $semestre,
-        'seccion' => $seccion,
-        'foto' => $fotoPath,
-        'hash_certificado' => $hashCertificado
+    // =================================================================
+    // CREACIÓN DE ARCHIVO JSON PARA LA COLA ASÍNCRONA
+    // =================================================================
+    $payload = [
+        'id'               => $newId,
+        'nombre'           => $nombre,
+        'apellidos'        => $apellidos,
+        'correo'           => $correo,
+        'telefono'         => $telefono,
+        'hash_certificado' => $hashCertificado, 
+        'carrera'          => $carrera,
+        'semestre'         => $semestre,
+        'seccion'          => $seccion,
+        'foto'             => $rutaFoto
     ];
 
-    file_put_contents(
-        $jobDir . $id . '.json',
-        json_encode($jobData, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT)
-    );
-
-    // =========================
-    // MENSAJE WHATSAPP
-    // =========================
-    $mensaje =
-        "UNIVERSIDAD MARIANO GÁLVEZ DE GUATEMALA\n\n" .
-        "Estimado(a) $nombre $apellidos,\n\n" .
-        "Su registro fue procesado correctamente.\n\n" .
-        "ID: $id\n" .
-        "Carrera: $carrera\n" .
-        "Semestre: $semestre\n" .
-        "Sección: $seccion\n\n" .
-        "✔ Firma digital\n✔ QR de validación\n✔ Hash de seguridad\n\n" .
-        "UMG Guatemala";
-
-    $telefonoClean = preg_replace('/[^0-9]/', '', $telefono);
-
-    if (substr($telefonoClean, 0, 3) !== '502') {
-        $telefonoClean = '502' . $telefonoClean;
+    // Definir directorio de la cola asíncrona
+    $jobDir = __DIR__ . '/jobs_pdf/';
+    if (!is_dir($jobDir)) {
+        mkdir($jobDir, 0777, true);
     }
 
-    $whatsapp = "https://wa.me/$telefonoClean?text=" . urlencode($mensaje);
+    // Guardar físicamente el archivo JSON en la cola usando el ID del usuario
+    $archivoJsonRuta = $jobDir . 'job_' . $newId . '.json';
+    $jsonGuardado = file_put_contents($archivoJsonRuta, json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 
-    // =========================
-    // RESPUESTA
-    // =========================
-    ob_clean();
+    // =================================================================
+    // ENVIAR AL WORKER EN TIEMPO REAL (TRIGGER DE GENERACIÓN)
+    // =================================================================
+    if ($jsonGuardado !== false) {
+        try {
+            $ch = curl_init('http://127.0.0.1/proyecto_umg_2/worker_pdf.php?ejecucion_inmediata=1');
+            $curlOptions = [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_POST           => true,
+                CURLOPT_TIMEOUT        => 15,
+                CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
+                CURLOPT_POSTFIELDS     => json_encode($payload)
+            ];
+            curl_setopt_array($ch, $curlOptions);
 
+            $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($httpCode === 200) {
+                $correoOk = true; 
+            }
+        } catch (Throwable $e) {
+            $correoOk = false; 
+        }
+    }
+
+    // Url opcional de WhatsApp para retorno del JS
+    $urlWhatsapp = "https://api.whatsapp.com/send?phone=" . $telefono . "&text=" . urlencode(
+"Universidad Mariano Gálvez de Guatemala
+
+Estimado(a) " . $nombre . " " . $apellidos . ",
+
+Le informamos que su registro académico fue realizado correctamente en el sistema institucional.
+
+Su carnet digital universitario se encuentra actualmente en proceso de generación y será enviado a su correo electrónico institucional en breve,si no llega a la bandeja de entrada podria revisar spam.
+
+Atentamente,
+Universidad Mariano Gálvez de Guatemala"
+);
+
+    // Respuesta final enviada a la vista
     echo json_encode([
-        'success' => true,
-        'message' => 'Registro exitoso. Carnet en proceso.',
-        'id' => $id,
-        'hash' => $hashCertificado,
-        'whatsapp' => $whatsapp
+        'success'        => true,
+        'message'        => 'Estudiante registrado con éxito, certificado insertado en BD, JSON en cola y disparador enviado.',
+        'id'             => $newId,
+        'correo_enviado' => $correoOk,
+        'whatsapp'       => $urlWhatsapp 
     ]);
+    exit;
 
 } catch (Throwable $e) {
-
     if (isset($pdo) && $pdo->inTransaction()) {
         $pdo->rollBack();
     }
-
-    ob_clean();
+    
+    http_response_code(500);
 
     echo json_encode([
         'success' => false,
-        'message' => $e->getMessage()
+        'message' => 'ERROR REAL DETECTADO EN EL SERVIDOR',
+        'error'   => $e->getMessage(),
+        'file'    => $e->getFile(),
+        'line'    => $e->getLine()
     ]);
+    exit;
 }
-
-exit;
-?>

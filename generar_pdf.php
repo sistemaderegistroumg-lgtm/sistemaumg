@@ -1,150 +1,377 @@
 <?php
-session_start();
-require_once 'config.php';
 
-// Verificar sesión
-if (!isset($_SESSION['usuario'])) {
-    header("Location: login.php");
+session_start();
+
+require_once 'config.php';
+require_once 'vendor/autoload.php';
+
+// ======================================================
+// PHPMailer MANUAL
+// ======================================================
+require_once __DIR__ . '/phpmailer/PHPMailer.php';
+require_once __DIR__ . '/phpmailer/SMTP.php';
+require_once __DIR__ . '/phpmailer/Exception.php';
+
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\Exception;
+
+use Dompdf\Dompdf;
+use Dompdf\Options;
+
+header('Content-Type: application/json; charset=utf-8');
+
+// ======================================================
+// VALIDAR SESIÓN
+// ======================================================
+if (!isset($_SESSION['usuario_id'])) {
+
+    echo json_encode([
+        'success' => false,
+        'message' => 'Sesión inválida'
+    ]);
+
     exit;
 }
 
-// Verificar TCPDF
-if (!file_exists(TCPDF_PATH)) {
-    die('<h2>Error: No se encontró la librería TCPDF en: ' . TCPDF_PATH . '</h2>');
-}
-require_once TCPDF_PATH;
+// ======================================================
+// LEER JSON
+// ======================================================
+$json = file_get_contents("php://input");
 
-// Limpiar cualquier output previo
-if (ob_get_level()) ob_end_clean();
+if (!$json) {
 
-$pdo      = getDB();
-$curso_id = (int)filter_input(INPUT_GET, 'curso_id', FILTER_VALIDATE_INT);
-$fecha    = filter_input(INPUT_GET, 'fecha') ?: date('Y-m-d');
+    echo json_encode([
+        'success' => false,
+        'message' => 'JSON vacío'
+    ]);
 
-if ($curso_id <= 0) {
-    die('ID de curso no válido.');
+    exit;
 }
 
-// Datos del curso
-$stmt = $pdo->prepare("SELECT nombre, salon FROM cursos WHERE id = ?");
-$stmt->execute([$curso_id]);
-$curso = $stmt->fetch();
-if (!$curso) { die('Curso no encontrado.'); }
+$data = json_decode($json, true);
 
-// Estudiantes con asistencia
-$stmt = $pdo->prepare("
-    SELECT u.nombre, u.apellidos, u.correo, u.foto,
-           IFNULL((
-               SELECT ad.presente
-               FROM asistencias a
-               JOIN asistencia_detalle ad ON a.id = ad.asistencia_id
-               WHERE ad.estudiante_id = u.id AND a.curso_id = ? AND a.fecha = ?
-               LIMIT 1
-           ), 0) AS presente,
-           (
-               SELECT ad.hora_registro
-               FROM asistencias a
-               JOIN asistencia_detalle ad ON a.id = ad.asistencia_id
-               WHERE ad.estudiante_id = u.id AND a.curso_id = ? AND a.fecha = ?
-               LIMIT 1
-           ) AS hora_registro
-    FROM curso_estudiante ce
-    JOIN usuarios u ON ce.estudiante_id = u.id
-    WHERE ce.curso_id = ?
-    ORDER BY u.apellidos, u.nombre
-");
-$stmt->execute([$curso_id, $fecha, $curso_id, $fecha, $curso_id]);
-$estudiantes = $stmt->fetchAll();
+if (!$data) {
 
-// Estadísticas
-$total    = count($estudiantes);
-$presentes = count(array_filter($estudiantes, fn($e) => $e['presente']));
-$ausentes  = $total - $presentes;
-$pct       = $total > 0 ? round(($presentes/$total)*100) : 0;
+    echo json_encode([
+        'success' => false,
+        'message' => 'JSON inválido'
+    ]);
 
-// ---- Crear PDF ----
-$pdf = new TCPDF('P', 'mm', 'A4', true, 'UTF-8', false);
-$pdf->SetCreator('Sistema UMG');
-$pdf->SetAuthor('Universidad Mariano Gálvez');
-$pdf->SetTitle('Asistencia - ' . $curso['nombre']);
-$pdf->SetMargins(15, 30, 15);
-$pdf->SetHeaderMargins(10, 5);
-$pdf->SetAutoPageBreak(true, 20);
-$pdf->setImageScale(PDF_IMAGE_SCALE_RATIO);
-
-// Header personalizado
-$pdf->setHeaderData('', 0, '', '');
-$pdf->SetHeaderMargin(5);
-$pdf->AddPage();
-
-// Logo + encabezado
-$logoUrl = 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/3b/LogoUMG.png/320px-LogoUMG.png';
-
-$html = '
-<style>
-  body    { font-family: DejaVu Serif, serif; font-size:10pt; color:#2c3e50; }
-  .titulo { font-size:16pt; font-weight:bold; color:#003366; text-align:center; margin-bottom:3px; }
-  .sub    { font-size:11pt; color:#1c3f60; text-align:center; margin-bottom:2px; }
-  .fecha  { font-size:9pt; color:#555; text-align:center; margin-bottom:12px; }
-  .info   { font-size:9.5pt; background:#f4f6f9; padding:8px 10px; border-left:4px solid #003366; margin-bottom:14px; }
-  .stats  { font-size:9pt; color:#333; margin-bottom:12px; }
-  table   { width:100%; border-collapse:collapse; }
-  th      { background:#003366; color:white; padding:7px 8px; font-size:9pt; text-align:left; }
-  td      { padding:7px 8px; font-size:9pt; border-bottom:1px solid #e0e0e0; }
-  tr:nth-child(even) td { background:#f8f9fa; }
-  .presente { color:#166534; font-weight:bold; }
-  .ausente  { color:#991b1b; font-weight:bold; }
-  .footer { font-size:8pt; color:#aaa; text-align:center; margin-top:20px; }
-</style>
-
-<div class="titulo">Universidad Mariano Gálvez</div>
-<div class="sub">Registro de Asistencia Estudiantil</div>
-<div class="fecha">Generado: ' . date('d/m/Y H:i:s') . '</div>
-
-<div class="info">
-  <b>Curso:</b> ' . htmlspecialchars($curso['nombre']) . ' &nbsp;|&nbsp;
-  <b>Salón:</b> ' . htmlspecialchars($curso['salon']) . ' &nbsp;|&nbsp;
-  <b>Fecha:</b> ' . $fecha . '
-</div>
-
-<div class="stats">
-  Total: <b>' . $total . '</b> &nbsp;·&nbsp;
-  Presentes: <b style="color:#166534">' . $presentes . '</b> &nbsp;·&nbsp;
-  Ausentes: <b style="color:#991b1b">' . $ausentes . '</b> &nbsp;·&nbsp;
-  Asistencia: <b>' . $pct . '%</b>
-</div>
-
-<table>
-  <thead>
-    <tr>
-      <th>#</th>
-      <th>Nombre completo</th>
-      <th>Correo</th>
-      <th>Estado</th>
-      <th>Hora</th>
-    </tr>
-  </thead>
-  <tbody>';
-
-$n = 1;
-foreach ($estudiantes as $est) {
-    $nombre   = htmlspecialchars(ucwords(strtolower($est['nombre'] . ' ' . $est['apellidos'])));
-    $correo   = htmlspecialchars($est['correo']);
-    $estado   = $est['presente'] ? '<span class="presente">PRESENTE</span>' : '<span class="ausente">AUSENTE</span>';
-    $hora     = $est['presente'] && $est['hora_registro'] ? $est['hora_registro'] : '--:--:--';
-    $html    .= "<tr><td>$n</td><td>$nombre</td><td>$correo</td><td>$estado</td><td>$hora</td></tr>";
-    $n++;
+    exit;
 }
 
-$html .= '
-  </tbody>
-</table>
-<div class="footer">Documento generado automáticamente · Sistema de Asistencia Biométrica UMG · ' . date('d/m/Y') . '</div>';
+if (!isset($data['curso_id'])) {
 
-$pdf->writeHTML($html, true, false, true, false, '');
+    echo json_encode([
+        'success' => false,
+        'message' => 'Curso inválido'
+    ]);
 
-// Descargar
-while (ob_get_level()) ob_end_clean();
-$nombreArchivo = 'Asistencia_' . preg_replace('/[^a-zA-Z0-9]/', '_', $curso['nombre']) . '_' . $fecha . '.pdf';
-$pdf->Output($nombreArchivo, 'D');
-exit;
+    exit;
+}
+
+$curso_id = (int)$data['curso_id'];
+
+try {
+
+    $pdo = getDB();
+
+    // ======================================================
+    // OBTENER CURSO
+    // ======================================================
+    $stmtCurso = $pdo->prepare("
+        SELECT
+            c.nombre,
+            c.salon,
+            u.correo
+
+        FROM cursos c
+
+        INNER JOIN usuarios u
+            ON c.catedratico_id = u.id
+
+        WHERE c.id = ?
+    ");
+
+    $stmtCurso->execute([$curso_id]);
+
+    $curso = $stmtCurso->fetch(PDO::FETCH_ASSOC);
+
+    if (!$curso) {
+
+        echo json_encode([
+            'success' => false,
+            'message' => 'Curso no encontrado'
+        ]);
+
+        exit;
+    }
+
+    // ======================================================
+    // ESTUDIANTES PRESENTES
+    // ======================================================
+    $stmt = $pdo->prepare("
+        SELECT
+            u.nombre,
+            u.apellidos,
+            u.correo,
+            d.fecha_hora
+
+        FROM detecciones d
+
+        INNER JOIN usuarios u
+            ON u.id = d.estudiante_id
+
+        WHERE d.curso_id = ?
+        AND DATE(d.fecha_hora) = CURRENT_DATE
+        AND u.rol_id = 2
+
+        ORDER BY d.fecha_hora ASC
+    ");
+
+    $stmt->execute([$curso_id]);
+
+    $estudiantes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $total = count($estudiantes);
+
+    // ======================================================
+    // HTML PDF
+    // ======================================================
+    $html = '
+
+    <style>
+
+    body{
+        font-family: Arial;
+        color:#0f172a;
+    }
+
+    .header{
+        background:#0f172a;
+        color:white;
+        padding:25px;
+        border-radius:10px;
+    }
+
+    .title{
+        font-size:28px;
+        font-weight:bold;
+    }
+
+    .card{
+        margin-top:20px;
+        background:#f1f5f9;
+        padding:20px;
+        border-radius:10px;
+    }
+
+    .total{
+        font-size:40px;
+        color:#22c55e;
+        font-weight:bold;
+    }
+
+    table{
+        width:100%;
+        border-collapse:collapse;
+        margin-top:25px;
+    }
+
+    th{
+        background:#0f172a;
+        color:white;
+        padding:12px;
+        text-align:left;
+    }
+
+    td{
+        padding:10px;
+        border-bottom:1px solid #ddd;
+    }
+
+    </style>
+
+    <div class="header">
+
+        <div class="title">
+            Dashboard de Asistencia
+        </div>
+
+        <br>
+
+        Curso:
+        '.$curso['nombre'].'<br>
+
+        Salón:
+        '.$curso['salon'].'<br>
+
+        Fecha:
+        '.date('d/m/Y').'
+
+    </div>
+
+    <div class="card">
+
+        <div class="total">
+            '.$total.'
+        </div>
+
+        <div>
+            Estudiantes presentes
+        </div>
+
+    </div>
+
+    <table>
+
+        <thead>
+
+            <tr>
+                <th>#</th>
+                <th>Nombre</th>
+                <th>Correo</th>
+                <th>Hora</th>
+            </tr>
+
+        </thead>
+
+        <tbody>
+    ';
+
+    $i = 1;
+
+    foreach ($estudiantes as $est) {
+
+        $html .= '
+
+        <tr>
+
+            <td>'.$i++.'</td>
+
+            <td>
+                '.$est['nombre'].' '.$est['apellidos'].'
+            </td>
+
+            <td>
+                '.$est['correo'].'
+            </td>
+
+            <td>
+                '.date(
+                    'H:i:s',
+                    strtotime($est['fecha_hora'])
+                ).'
+            </td>
+
+        </tr>
+        ';
+    }
+
+    $html .= '
+
+        </tbody>
+
+    </table>
+    ';
+
+    // ======================================================
+    // DOMPDF
+    // ======================================================
+    $options = new Options();
+
+    $options->set(
+        'isRemoteEnabled',
+        true
+    );
+
+    $dompdf = new Dompdf($options);
+
+    $dompdf->loadHtml($html);
+
+    $dompdf->setPaper(
+        'A4',
+        'portrait'
+    );
+
+    $dompdf->render();
+
+    // ======================================================
+    // CREAR CARPETA
+    // ======================================================
+    if (!is_dir('reportes')) {
+
+        mkdir('reportes');
+    }
+
+    // ======================================================
+    // GUARDAR PDF
+    // ======================================================
+    $pdfPath =
+        'reportes/asistencia.pdf';
+
+    file_put_contents(
+        $pdfPath,
+        $dompdf->output()
+    );
+
+    // ======================================================
+    // ENVIAR CORREO
+    // ======================================================
+    $mail = new PHPMailer(true);
+
+    $mail->isSMTP();
+
+    $mail->Host = 'smtp.gmail.com';
+
+    $mail->SMTPAuth = true;
+
+    $mail->Username =
+        'sistemaderegistroumg@gmail.com';
+
+    $mail->Password =
+        'bwnzxmrzkxtfride';
+
+    $mail->SMTPSecure = 'tls';
+
+    $mail->Port = 587;
+
+    $mail->CharSet = 'UTF-8';
+
+    $mail->setFrom(
+        'sistemaderegistroumg@gmail.com',
+        'Sistema UMG'
+    );
+
+    $mail->addAddress(
+        $curso['correo']
+    );
+
+    $mail->Subject =
+        'Reporte de asistencia';
+
+    $mail->Body =
+        'Adjunto PDF de asistencia del curso.';
+
+    $mail->addAttachment($pdfPath);
+
+    $mail->send();
+
+    echo json_encode([
+
+        'success' => true,
+
+        'message' =>
+            'PDF generado y enviado correctamente'
+    ]);
+
+} catch (Exception $e) {
+
+    echo json_encode([
+
+        'success' => false,
+
+        'message' => $e->getMessage()
+    ]);
+}
+?>

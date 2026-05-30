@@ -6,7 +6,9 @@ requireSession();
 $usuario    = $_SESSION['usuario'];
 $rol        = $_SESSION['rol'];
 $usuario_id = $_SESSION['usuario_id'];
-$menu_url   = $rol === 'Administrador' ? 'menu_admin.php' : 'menu_catedratico.php';
+$menu_url = ($rol == 1)
+    ? 'menu_admin.php'
+    : 'menu_catedratico.php';
 ?>
 <!DOCTYPE html>
 <html lang="es">

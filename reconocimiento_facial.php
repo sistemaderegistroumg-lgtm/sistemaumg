@@ -1,10 +1,32 @@
 <?php
 session_start();
+include 'mascota.php';
 require_once __DIR__ . '/config.php';
+
 requireSession();
-$rol        = $_SESSION['rol'];
-$menu_url   = $rol === 'Administrador' ? 'menu_admin.php' : 'menu_catedratico.php';
+
+$rol        = (int)$_SESSION['rol'];
 $usuario_id = (int)$_SESSION['usuario_id'];
+
+// Menú según rol
+switch ($rol) {
+    case 1:
+        $menu_url = 'menu_admin.php';
+        break;
+
+    case 3:
+        $menu_url = 'menu_catedratico.php';
+        break;
+
+    case 2:
+        $menu_url = 'menu_estudiante.php';
+        break;
+
+    default:
+        session_destroy();
+        header("Location: login.php");
+        exit;
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -21,6 +43,49 @@ $usuario_id = (int)$_SESSION['usuario_id'];
         nav{background:rgba(0,0,0,.35);backdrop-filter:blur(10px);padding:0 2rem;display:flex;justify-content:space-between;align-items:center;height:60px;border-bottom:1px solid rgba(255,255,255,.1);}
         .nav-title{color:#00d4a8;font-weight:700;font-size:1rem;display:flex;align-items:center;gap:.5rem;}
         .btn-back{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:white;padding:.4rem .9rem;border-radius:8px;text-decoration:none;font-size:.8rem;}
+        .logo-umg{
+    width:42px;
+    height:42px;
+    object-fit:contain;
+
+    background:white;
+    border-radius:50%;
+
+    padding:4px;
+
+    box-shadow:0 2px 8px rgba(0,0,0,.25);
+}
+
+.nav-left{
+    display:flex;
+    align-items:center;
+    gap:1rem;
+}
+
+.btn-back{
+    display:inline-flex;
+    align-items:center;
+    gap:.45rem;
+
+    background:rgba(255,255,255,.1);
+    border:1px solid rgba(255,255,255,.2);
+
+    color:white;
+    padding:.45rem 1rem;
+
+    border-radius:8px;
+    text-decoration:none;
+
+    font-size:.82rem;
+    font-weight:600;
+
+    transition:.2s;
+}
+
+.btn-back:hover{
+    background:#00d4a8;
+    color:#111;
+}
         .main{display:grid;grid-template-columns:1fr 340px;gap:1.5rem;padding:1.5rem;max-width:1200px;margin:0 auto;}
         .cam-panel{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);backdrop-filter:blur(14px);border-radius:20px;padding:1.5rem;}
         .panel-title{font-size:1rem;font-weight:700;color:#00d4a8;margin-bottom:1rem;display:flex;align-items:center;gap:.5rem;}
@@ -62,11 +127,36 @@ $usuario_id = (int)$_SESSION['usuario_id'];
 </head>
 <body>
 <nav>
-    <div class="nav-title"><i class="fas fa-camera"></i> Asistencia Facial · UMG</div>
-    <div style="display:flex;gap:.75rem;align-items:center">
-        <span style="font-size:.75rem;color:rgba(255,255,255,.5)"><?= htmlspecialchars($_SESSION['usuario']) ?></span>
-        <a class="btn-back" href="<?= $menu_url ?>"><i class="fas fa-arrow-left"></i> Menú</a>
+
+    <div class="nav-left">
+
+        <!-- BOTÓN MENÚ -->
+        <a class="btn-back" href="<?= $menu_url ?>">
+            <i class="fas fa-arrow-left"></i>
+            Menú
+        </a>
+
+        <!-- LOGO -->
+        <img
+            src="logo_umg.png"
+            alt="UMG"
+            class="logo-umg"
+        >
+
+        <!-- TÍTULO -->
+        <div class="nav-title">
+            <i class="fas fa-camera"></i>
+            Asistencia Facial · UMG
+        </div>
+
     </div>
+
+    <div style="display:flex;gap:.75rem;align-items:center">
+        <span style="font-size:.75rem;color:rgba(255,255,255,.5)">
+            <?= htmlspecialchars($_SESSION['usuario']) ?>
+        </span>
+    </div>
+
 </nav>
 
 <div class="main">
@@ -129,7 +219,7 @@ $usuario_id = (int)$_SESSION['usuario_id'];
 
 <script>
 const CATEDRATICO_ID = <?= (int)$usuario_id ?>;
-const ES_ADMIN       = <?= $_SESSION['rol'] === 'Administrador' ? 'true' : 'false' ?>;
+const ES_ADMIN = <?= ((int)$_SESSION['rol'] === 1) ? 'true' : 'false' ?>;
 
 let modelosCargados    = false;
 let estudiantes        = [];
@@ -177,25 +267,46 @@ async function iniciarCamara() {
 
 // ---- Cursos ----
 async function cargarCursos() {
+
     try {
-        const action = ES_ADMIN ? 'get_todos_cursos' : 'get_cursos';
-        const res    = await fetch(`asistencia_api.php?action=${action}&catedratico_id=${CATEDRATICO_ID}`);
+
+        const action = 'get_cursos';
+
+        const res = await fetch(
+            `asistencia_api.php?action=${action}&catedratico_id=${CATEDRATICO_ID}`
+        );
+
         const cursos = await res.json();
-        const sel    = document.getElementById('selectCurso');
-        sel.innerHTML = '<option value="">— Seleccionar curso —</option>';
+
+        const sel = document.getElementById('selectCurso');
+
+        sel.innerHTML =
+            '<option value="">— Seleccionar curso —</option>';
+
         cursos.forEach(c => {
+
             const op = document.createElement('option');
-            op.value       = c.id;
-            op.textContent = `${c.nombre} · Salón ${c.salon} (${c.total_estudiantes} est.)`;
+
+            op.value = c.id;
+
+            op.textContent =
+                `${c.nombre} · Salón ${c.salon} (${c.total_estudiantes} est.)`;
+
             sel.appendChild(op);
         });
+
         if (cursos.length === 1) {
+
             sel.value = cursos[0].id;
+
             await cargarEstudiantes();
         }
-    } catch(e) { console.error(e); }
-}
 
+    } catch(e) {
+
+        console.error(e);
+    }
+}
 // ---- Estudiantes + descriptores ----
 async function cargarEstudiantes() {
     const cursoId = document.getElementById('selectCurso').value;

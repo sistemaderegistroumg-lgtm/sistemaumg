@@ -1,5 +1,7 @@
 {
     "require": {
-        "twilio/sdk": "*"
+        "twilio/sdk": "*",
+        "resend/resend-php": "*",
+        "dompdf/dompdf": "^3.1"
     }
 }

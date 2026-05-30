@@ -1,21 +1,65 @@
 <?php
-// Incluimos la configuración para tener acceso a las rutas
+
 require_once 'config.php';
 
-// Iniciamos sesión
+// ============================================
+// INICIAR SESIÓN
+// ============================================
 if (session_status() === PHP_SESSION_NONE) {
+
     session_start();
 }
 
-// Lógica de redirección:
-if (isset($_SESSION['usuario'])) {
-    // Si ya hay sesión, enviarlo al menú (ajusta según tu rol)
-    // Aquí podrías incluso hacer un switch si tuvieras diferentes menús por rol
-    header("Location: menu_admin.php"); 
-    exit;
+// ============================================
+// VALIDAR SESIÓN
+// ============================================
+if (isset($_SESSION['usuario_id'])) {
+
+    switch ($_SESSION['rol']) {
+
+        // ====================================
+        // ADMINISTRADOR
+        // ====================================
+        case 1:
+
+            header("Location: menu_admin.php");
+            exit;
+
+        // ====================================
+        // ESTUDIANTE
+        // ====================================
+        case 2:
+
+            header("Location: menu_estudiante.php");
+            exit;
+
+        // ====================================
+        // CATEDRÁTICO
+        // ====================================
+        case 3:
+
+            header("Location: menu_catedratico.php");
+            exit;
+
+        // ====================================
+        // ROL INVÁLIDO
+        // ====================================
+        default:
+
+            session_destroy();
+
+            header("Location: login.php");
+
+            exit;
+    }
+
 } else {
-    // Si NO hay sesión, enviarlo al login
+
+    // ========================================
+    // NO HAY SESIÓN
+    // ========================================
     header("Location: login.php");
+
     exit;
 }
 ?>

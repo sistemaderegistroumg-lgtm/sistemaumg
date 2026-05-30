@@ -1,61 +1,157 @@
 <?php
+
 session_start();
+
 header('Content-Type: application/json');
+
 require_once 'config.php';
 
+// =====================================================
+// VALIDAR MÉTODO
+// =====================================================
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    echo json_encode(['success'=>false,'message'=>'Método no permitido']);
+
+    echo json_encode([
+        'success' => false,
+        'message' => 'Método no permitido'
+    ]);
+
     exit;
 }
 
-$usuario  = trim($_POST['nombre_usuario'] ?? '');
+// =====================================================
+// DATOS DEL FORMULARIO
+// =====================================================
+$correo = trim($_POST['correo'] ?? '');
+
 $password = trim($_POST['contrasena'] ?? '');
 
-if ($usuario === '' || $password === '') {
-    echo json_encode(['success'=>false,'message'=>'Campos requeridos']);
+// =====================================================
+// VALIDAR CAMPOS
+// =====================================================
+if (empty($correo) || empty($password)) {
+
+    echo json_encode([
+        'success' => false,
+        'message' => 'Todos los campos son obligatorios'
+    ]);
+
     exit;
 }
 
 try {
+
+    // =====================================================
+    // CONEXIÓN
+    // =====================================================
     $pdo = getDB();
 
-    // ✅ CAMBIO IMPORTANTE: id → NO id_roles_usuario
+    // =====================================================
+    // BUSCAR USUARIO POR CORREO
+    // =====================================================
     $stmt = $pdo->prepare("
-        SELECT id, nombre_usuario, contrasena, rol
-        FROM roles_usuarios
-        WHERE nombre_usuario = ?
+        SELECT
+            u.id,
+            u.nombre,
+            u.apellidos,
+            u.correo,
+            u.password,
+            u.rol_id,
+            r.nombre_rol
+        FROM usuarios u
+        INNER JOIN roles r
+            ON r.id = u.rol_id
+        WHERE u.correo = ?
         LIMIT 1
     ");
-    $stmt->execute([$usuario]);
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    if (!$row) {
-        echo json_encode(['success'=>false,'message'=>'Usuario no encontrado']);
+    $stmt->execute([$correo]);
+
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    // =====================================================
+    // VALIDAR USUARIO
+    // =====================================================
+    if (!$user) {
+
+        echo json_encode([
+            'success' => false,
+            'message' => 'Usuario no encontrado'
+        ]);
+
         exit;
     }
 
-    // password verify
-    if (!password_verify($password, $row['contrasena'])) {
-        echo json_encode(['success'=>false,'message'=>'Contraseña incorrecta']);
+    // =====================================================
+    // VALIDAR CONTRASEÑA
+    // =====================================================
+    if (!password_verify($password, $user['password'])) {
+
+        echo json_encode([
+            'success' => false,
+            'message' => 'Contraseña incorrecta'
+        ]);
+
         exit;
     }
 
-    $_SESSION['usuario']    = $row['nombre_usuario'];
-    $_SESSION['rol']        = $row['rol'];
-    $_SESSION['usuario_id'] = $row['id'];
-
+    // =====================================================
+    // CREAR SESIÓN SEGURA
+    // =====================================================
     session_regenerate_id(true);
 
+    $_SESSION['usuario_id'] = $user['id'];
+
+    $_SESSION['usuario'] = $user['correo'];
+
+    $_SESSION['nombre'] =
+        $user['nombre'] . ' ' . $user['apellidos'];
+
+    $_SESSION['rol'] = intval($user['rol_id']);
+
+    $_SESSION['nombre_rol'] = $user['nombre_rol'];
+
+    // =====================================================
+    // REDIRECCIÓN SEGÚN ROL
+    // =====================================================
+    switch ($_SESSION['rol']) {
+
+        case 1:
+            $redirect = 'menu_admin.php';
+            break;
+
+        case 2:
+            $redirect = 'menu_estudiante.php';
+            break;
+
+        case 3:
+            $redirect = 'menu_catedratico.php';
+            break;
+
+        default:
+
+            echo json_encode([
+                'success' => false,
+                'message' => 'Rol inválido'
+            ]);
+
+            exit;
+    }
+
+    // =====================================================
+    // RESPUESTA EXITOSA
+    // =====================================================
     echo json_encode([
-        'success' => true,
-        'redirect' => ($row['rol'] === 'Administrador')
-            ? 'menu_admin.php'
-            : 'menu_catedratico.php'
+        'success'  => true,
+        'message'  => 'Inicio de sesión correcto',
+        'redirect' => $redirect
     ]);
 
 } catch (PDOException $e) {
+
     echo json_encode([
         'success' => false,
-        'message' => $e->getMessage()
+        'message' => 'Error de base de datos: ' . $e->getMessage()
     ]);
 }
+?>

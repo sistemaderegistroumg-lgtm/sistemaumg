@@ -2,7 +2,7 @@
 session_start();
 require_once 'config.php';
 include 'mascota.php';
-requireSession('Administrador');
+requireSession(1);
 $usuario = $_SESSION['usuario'];
 ?>
 <!DOCTYPE html>
@@ -107,7 +107,6 @@ $usuario = $_SESSION['usuario'];
                     <input type="text" name="seccion" required placeholder="A, B, C...">
                 </div>
 
-                <!-- Cámara -->
                 <div class="camera-section">
                     <span class="camera-label">FOTO BIOMÉTRICA</span>
                     <div class="camera-layout">
@@ -135,7 +134,6 @@ $usuario = $_SESSION['usuario'];
             </div>
         </form>
 
-        <!-- Carnet -->
         <div class="carnet-section" id="carnetSection">
             <h3 style="margin-bottom:.75rem;color:var(--primary)">Vista previa del carnet</h3>
             <img id="carnetPreviewImg" src="" alt="Carnet">
@@ -146,7 +144,6 @@ $usuario = $_SESSION['usuario'];
     </div>
 </div>
 
-<!-- Canvas oculto para generar carnet -->
 <canvas id="carnetCanvas" width="640" height="400"></canvas>
 
 <script>
@@ -164,8 +161,11 @@ async function iniciarCamara() {
         stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user', width:640, height:480 } });
         video.srcObject = stream;
         video.style.display = 'block';
-    } catch(e) { showAlert('No se pudo acceder a la cámara: ' + e.message, 'error'); }
+    } catch(e) { 
+        showAlert('No se pudo acceder a la cámara: ' + e.message, 'error'); 
+    }
 }
+
 function detenerCamara() {
     if (stream) stream.getTracks().forEach(t => t.stop());
 }
@@ -196,12 +196,12 @@ btnCambiar.addEventListener('click', () => {
 
 // Generar carnet
 document.getElementById('btnGenerar').addEventListener('click', async () => {
-    const nombre   = document.querySelector('[name=nombre]').value.trim();
+    const nombre    = document.querySelector('[name=nombre]').value.trim();
     const apellidos = document.querySelector('[name=apellidos]').value.trim();
-    const carrera  = document.querySelector('[name=carrera]').value;
-    const semestre = document.querySelector('[name=semestre]').value;
-    const seccion  = document.querySelector('[name=seccion]').value;
-    const foto     = fotoInput.value;
+    const carrera   = document.querySelector('[name=carrera]').value;
+    const semestre  = document.querySelector('[name=semestre]').value;
+    const seccion   = document.querySelector('[name=seccion]').value;
+    const foto      = fotoInput.value;
 
     if (!nombre || !apellidos || !carrera || !semestre || !foto) {
         showAlert('Completa todos los campos y toma la foto antes de generar el carnet.', 'error');
@@ -218,18 +218,31 @@ async function generarCarnet(nombre, apellidos, carrera, semestre, seccion, foto
     // Fondo
     ctx.fillStyle = '#f0f4f8';
     ctx.fillRect(0,0,cvs.width,cvs.height);
+   
+    // Fondo degradado superior
+    const grad = ctx.createLinearGradient(0,0,cvs.width,0);
+    grad.addColorStop(0, '#0f172a');
+    grad.addColorStop(1, '#2563eb');
 
-    // Barra superior azul
-    ctx.fillStyle = '#1a2e4a';
-    ctx.fillRect(0,0,cvs.width,70);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0,0,cvs.width,80);
 
-    // Texto Universidad
     ctx.fillStyle = 'white';
-    ctx.font = 'bold 18px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText('UNIVERSIDAD MARIANO GÁLVEZ', cvs.width/2, 32);
-    ctx.font = '13px Arial';
-    ctx.fillText('Carné de Identificación Estudiantil', cvs.width/2, 54);
+
+    ctx.font = 'bold 22px Segoe UI';
+    ctx.fillText('UNIVERSIDAD MARIANO GÁLVEZ', cvs.width / 2, 38);
+
+    ctx.font = '14px Segoe UI';
+    ctx.fillText('Carné de Identificación Estudiantil', cvs.width / 2, 62);
+
+    // Línea decorativa
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(120, 78);
+    ctx.lineTo(cvs.width - 40, 78);
+    ctx.stroke();
 
     // Foto circular
     const fotoImg = new Image();
@@ -308,6 +321,7 @@ document.getElementById('registroForm').addEventListener('submit', async functio
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Guardando...';
 
     const fd = new FormData(this);
+    fd.append('foto', fotoInput.value);
 
     // Adjuntar carnet si fue generado
     if (carnetDataURL) {
@@ -316,44 +330,42 @@ document.getElementById('registroForm').addEventListener('submit', async functio
     }
 
     try {
-     const res = await fetch('guardar_estudiante.php', { method:'POST', body:fd });
-const data = await res.json();
+        const res = await fetch('guardar_estudiante.php', { method:'POST', body:fd });
+        const data = await res.json();
 
-if (data.success) {
+        if (data.success) {
+            showAlert('✅ ' + data.message, 'success');
 
-    showAlert('✅ ' + data.message, 'success');
+            // ABRIR WHATSAPP SI EXISTE EN LA RESPUESTA
+            if (data.whatsapp) {
+                window.open(data.whatsapp, "_blank");
+            }
 
-    // 🔥 ABRIR WHATSAPP DESDE BACKEND
-    if (data.whatsapp) {
-        window.open(data.whatsapp, "_blank");
-    }
+            // Generar carnet final con ID real retornado por la DB
+            const nombre = fd.get('nombre');
+            const apellidos = fd.get('apellidos');
 
-    // Generar carnet con ID real
-    const nombre = fd.get('nombre');
-    const apellidos = fd.get('apellidos');
+            await generarCarnet(
+                nombre,
+                apellidos,
+                fd.get('carrera'),
+                fd.get('semestre'),
+                fd.get('seccion'),
+                fd.get('foto'),
+                data.id
+            );
 
-    await generarCarnet(
-        nombre,
-        apellidos,
-        fd.get('carrera'),
-        fd.get('semestre'),
-        fd.get('seccion'),
-        fd.get('foto'),
-        data.id
-    );
-
-    this.reset();
-    fotoPreview.style.display = 'none';
-    fotoInput.value = '';
-    btnCambiar.style.display = 'none';
-    btnCapturar.style.display = 'inline-flex';
-    iniciarCamara();
-
-} else {
-    showAlert('❌ ' + (data.message || 'Error al guardar.'), 'error');
-}
+            this.reset();
+            fotoPreview.style.display = 'none';
+            fotoInput.value = '';
+            btnCambiar.style.display = 'none';
+            btnCapturar.style.display = 'inline-flex';
+            iniciarCamara();
+        } else {
+            showAlert('❌ ' + (data.message || 'Error al guardar.'), 'error');
+        }
     } catch(err) {
-        showAlert('❌ Error de conexión: ' + err.message, 'error');
+        showAlert('❌ Error de conexión o formato: ' + err.message, 'error');
     } finally {
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-save"></i> Guardar Registro y Enviar Correo';
@@ -368,6 +380,7 @@ function showAlert(msg, tipo) {
     setTimeout(() => el.className = 'alert', 6000);
 }
 
+// Inicialización de la app
 iniciarCamara();
 </script>
 </body>

@@ -1,225 +1,593 @@
 <?php
-require_once "config.php";
-$pdo = getDB();
-
-$resultado = "";
-$tipo = "";
-
-function logVerificacion($pdo, $id, $estado) {
-    $stmt = $pdo->prepare("
-        INSERT INTO log_verificaciones (certificado_id, resultado, ip)
-        VALUES (?, ?, ?)
-    ");
-    $stmt->execute([$id, $estado, $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0']);
-}
-
-// =========================================================================
-// EXTRACCIÓN GARANTIZADA DE METADATOS DEL PDF
-// =========================================================================
-function extraerHashDesdePDF($pdfPath) {
-    if (!file_exists($pdfPath)) {
-        return null;
-    }
-
-    $content = file_get_contents($pdfPath);
-
-    // Método principal: Extrae el contenido directo del tag /Keywords inyectado por TCPDF
-    if (preg_match('/\/Keywords\s*\(([^)]+)\)/', $content, $matches)) {
-        return trim($matches[1]);
-    }
-    
-    // Método Alternativo en UTF-16BE (Por si TCPDF codifica el texto del metadato)
-    if (preg_match('/\/Keywords\s*<([0-9a-fA-F]+)>/', $content, $matches)) {
-        $hex = $matches[1];
-        $str = hex2bin($hex);
-        // Quitar bytes de control de UTF-16 si existen
-        if (substr($str, 0, 2) == "\xFE\xFF") {
-            $str = substr($str, 2);
-            $str = mb_convert_encoding($str, 'UTF-8', 'UTF-16BE');
-        }
-        return trim($str);
-    }
-
-    return null;
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $hash = '';
-
-    // Proceso 1: Si subió un archivo
-    if (isset($_FILES['pdf_file']) && $_FILES['pdf_file']['error'] === UPLOAD_ERR_OK) {
-        $fileTmpPath = $_FILES['pdf_file']['tmp_name'];
-        $fileName = $_FILES['pdf_file']['name'];
-        $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
-
-        if ($fileExtension !== 'pdf') {
-            $resultado = "❌ El archivo debe ser un formato PDF válido.";
-            $tipo = "error";
-        } else {
-            $hash = extraerHashDesdePDF($fileTmpPath);
-            if (!$hash) {
-                $resultado = "❌ No se pudo encontrar un hash o firma válida en los metadatos del PDF.";
-                $tipo = "error";
-            }
-        }
-    } 
-    
-    // Proceso 2: Si usó el input de texto manual
-    if (!$hash && isset($_POST['hash'])) {
-        $hash = trim($_POST['hash']);
-    }
-
-    // Validación Final en la Base de Datos
-    if ($hash) {
-        $stmt = $pdo->prepare("
-            SELECT id, estado, nombre
-            FROM certificados
-            WHERE hash_certificado = ?
-        ");
-
-        $stmt->execute([$hash]);
-        $cert = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        if (!$cert) {
-            $resultado = "❌ Certificado inválido o no registrado en el sistema.";
-            $tipo = "error";
-        } else {
-            if ($cert['estado'] === 'VALIDO') {
-                $resultado = "✅ Certificado válido perteneciente a: " . $cert['nombre'];
-                $tipo = "success";
-            } else {
-                $resultado = "⚠ El certificado ingresado está REVOCADO.";
-                $tipo = "warning";
-            }
-
-            logVerificacion($pdo, $cert['id'], $cert['estado']);
-        }
-    } elseif (empty($resultado)) {
-        $resultado = "❌ Acción requerida: Ingrese un hash o suba un carnet.";
-        $tipo = "error";
-    }
-}
+session_start();
+include 'mascota.php';
 ?>
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <title>Verificador Oficial UMG</title>
-    <style>
-        body {
-            font-family: 'Segoe UI', sans-serif;
-            background: linear-gradient(135deg, #0f172a, #1e3a8a);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin:0;
-            color: white;
-        }
-        .card {
-            background: white;
-            color: black;
-            padding: 30px;
-            border-radius: 20px;
-            width: 420px;
-            text-align: center;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
-        }
-        .success { color: #16a34a; background: #e8f5e9; padding: 12px; border-radius: 10px; }
-        .error { color: #dc2626; background: #ffebee; padding: 12px; border-radius: 10px; }
-        .warning { color: #d97706; background: #fff8e1; padding: 12px; border-radius: 10px; }
-        
-        .tabs {
-            display: flex;
-            justify-content: space-around;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #f1f5f9;
-        }
-        .tab-btn {
-            background: none;
-            border: none;
-            padding: 10px;
-            font-weight: bold;
-            color: #94a3b8;
-            cursor: pointer;
-        }
-        .tab-btn.active {
-            color: #1e3a8a;
-            border-bottom: 2px solid #1e3a8a;
-        }
-        .pane { display: none; }
-        .pane.active { display: block; }
 
-        input[type="text"], input[type="file"] {
-            width: 90%;
-            padding: 12px;
-            margin: 10px 0;
-            border: 1px solid #cbd5e1;
-            border-radius: 8px;
-        }
-        button[type="submit"] {
-            width: 95%;
-            padding: 12px;
-            border: none;
-            background: #1e3a8a;
-            color: white;
-            border-radius: 10px;
-            font-weight: bold;
-            cursor: pointer;
-        }
-        button[type="submit"]:hover { background: #1d4ed8; }
-        hr { border: 0; border-top: 1px solid #f1f5f9; margin: 20px 0; }
-    </style>
+<meta charset="UTF-8">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Verificador de Certificados UMG</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+<style>
+
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+}
+
+body{
+
+    font-family:'Segoe UI', sans-serif;
+
+    min-height:100vh;
+
+    background:
+        linear-gradient(
+            135deg,
+            #0f172a,
+            #1e3a8a,
+            #2563eb
+        );
+
+    display:flex;
+
+    justify-content:center;
+
+    align-items:center;
+
+    padding:30px;
+}
+
+/* =========================================
+   TARJETA PRINCIPAL
+========================================= */
+
+.container{
+
+    width:100%;
+
+    max-width:750px;
+
+    background:rgba(255,255,255,.95);
+
+    backdrop-filter:blur(12px);
+
+    border-radius:24px;
+
+    overflow:hidden;
+
+    box-shadow:
+        0 15px 40px rgba(0,0,0,.25);
+}
+
+/* =========================================
+   HEADER
+========================================= */
+
+.header{
+
+    background:
+        linear-gradient(
+            135deg,
+            #0b3d91,
+            #2563eb
+        );
+
+    padding:35px;
+
+    text-align:center;
+
+    position:relative;
+}
+
+.logo{
+
+    width:90px;
+
+    height:90px;
+
+    object-fit:contain;
+
+    background:white;
+
+    border-radius:50%;
+
+    padding:10px;
+
+    box-shadow:0 5px 20px rgba(0,0,0,.2);
+}
+
+.header h1{
+
+    color:white;
+
+    margin-top:18px;
+
+    font-size:30px;
+
+    font-weight:700;
+}
+
+.header p{
+
+    color:rgba(255,255,255,.9);
+
+    margin-top:8px;
+
+    font-size:15px;
+}
+
+/* =========================================
+   CONTENIDO
+========================================= */
+
+.content{
+
+    padding:40px;
+}
+
+/* =========================================
+   BOTON MENU
+========================================= */
+
+.btn-menu{
+
+    display:inline-flex;
+
+    align-items:center;
+
+    gap:10px;
+
+    background:#0f172a;
+
+    color:white;
+
+    text-decoration:none;
+
+    padding:12px 18px;
+
+    border-radius:12px;
+
+    font-size:14px;
+
+    margin-bottom:25px;
+
+    transition:.3s;
+}
+
+.btn-menu:hover{
+
+    background:#1e293b;
+
+    transform:translateY(-2px);
+}
+
+/* =========================================
+   UPLOAD
+========================================= */
+
+.upload-box{
+
+    border:3px dashed #94a3b8;
+
+    border-radius:18px;
+
+    padding:45px;
+
+    text-align:center;
+
+    background:#f8fafc;
+
+    cursor:pointer;
+
+    transition:.3s;
+}
+
+.upload-box:hover{
+
+    border-color:#2563eb;
+
+    background:#eff6ff;
+}
+
+.upload-box i{
+
+    font-size:55px;
+
+    color:#2563eb;
+
+    margin-bottom:15px;
+}
+
+.upload-box p{
+
+    color:#334155;
+
+    font-size:17px;
+}
+
+.upload-box small{
+
+    display:block;
+
+    margin-top:10px;
+
+    color:#64748b;
+}
+
+input[type=file]{
+
+    display:none;
+}
+
+/* =========================================
+   BOTON
+========================================= */
+
+button{
+
+    width:100%;
+
+    margin-top:25px;
+
+    padding:16px;
+
+    border:none;
+
+    border-radius:14px;
+
+    background:
+        linear-gradient(
+            135deg,
+            #2563eb,
+            #1d4ed8
+        );
+
+    color:white;
+
+    font-size:17px;
+
+    font-weight:600;
+
+    cursor:pointer;
+
+    transition:.3s;
+}
+
+button:hover{
+
+    transform:translateY(-2px);
+
+    box-shadow:0 10px 20px rgba(37,99,235,.35);
+}
+
+/* =========================================
+   RESULTADO
+========================================= */
+
+#resultado{
+
+    margin-top:30px;
+
+    border-radius:18px;
+
+    padding:25px;
+
+    display:none;
+
+    animation:fade .4s ease;
+}
+
+@keyframes fade{
+
+    from{
+        opacity:0;
+        transform:translateY(10px);
+    }
+
+    to{
+        opacity:1;
+        transform:translateY(0);
+    }
+}
+
+.ok{
+
+    background:#dcfce7;
+
+    border:2px solid #22c55e;
+
+    color:#166534;
+}
+
+.bad{
+
+    background:#fee2e2;
+
+    border:2px solid #ef4444;
+
+    color:#991b1b;
+}
+
+.result-title{
+
+    font-size:24px;
+
+    margin-bottom:18px;
+
+    font-weight:700;
+}
+
+.info{
+
+    line-height:1.9;
+
+    font-size:15px;
+}
+
+.hash{
+
+    margin-top:15px;
+
+    padding:12px;
+
+    background:rgba(255,255,255,.7);
+
+    border-radius:10px;
+
+    word-break:break-all;
+
+    font-size:12px;
+}
+
+/* =========================================
+   FOOTER
+========================================= */
+
+.footer{
+
+    margin-top:25px;
+
+    text-align:center;
+
+    color:#64748b;
+
+    font-size:13px;
+}
+
+</style>
+
 </head>
 <body>
 
-<div class="card">
-    <h2>🔐 Verificador de Carnets UMG</h2>
+<div class="container">
 
-    <div class="tabs">
-        <button class="tab-btn active" onclick="switchView('upload-pane', this)">Subir PDF</button>
-        <button class="tab-btn" onclick="switchView('text-pane', this)">Escanear QR / Hash</button>
+    <!-- HEADER -->
+    <div class="header">
+
+        <img
+            src="logo_umg.png"
+            alt="UMG"
+            class="logo"
+        >
+
+        <h1>
+            Verificador de Certificados
+        </h1>
+
+        <p>
+            Universidad Mariano Gálvez de Guatemala
+        </p>
+
     </div>
 
-    <form method="POST" enctype="multipart/form-data">
-        <div id="upload-pane" class="pane active">
-            <p style="font-size: 13px; color:#64748b;">Suba el archivo PDF original del carnet universitario:</p>
-            <input type="file" name="pdf_file" accept=".pdf">
+    <!-- CONTENT -->
+    <div class="content">
+
+        <!-- BOTON MENU -->
+        <a
+            href="menu_admin.php"
+            class="btn-menu"
+        >
+            <i class="fas fa-arrow-left"></i>
+            Regresar al menú
+        </a>
+
+        <!-- FORM -->
+        <form id="formulario">
+
+            <label class="upload-box">
+
+                <input
+                    type="file"
+                    id="pdf"
+                    name="pdf"
+                    accept="application/pdf"
+                    required
+                >
+
+                <i class="fas fa-file-pdf"></i>
+
+                <p id="textoArchivo">
+                    Seleccione un certificado PDF
+                </p>
+
+                <small>
+                    El sistema verificará automáticamente
+                    el hash criptográfico del documento
+                </small>
+
+            </label>
+
+            <button type="submit">
+
+                <i class="fas fa-shield-check"></i>
+
+                Verificar Certificado
+
+            </button>
+
+        </form>
+
+        <!-- RESULTADO -->
+        <div id="resultado"></div>
+
+        <div class="footer">
+
+            Sistema Oficial de Validación UMG
+
         </div>
 
-        <div id="text-pane" class="pane">
-            <p style="font-size: 13px; color:#64748b;">Ingrese el Hash de verificación del documento:</p>
-            <input type="text" id="hash_input" name="hash" placeholder="Ejemplo: d3b07384d113ed1d47...">
-        </div>
-        <br>
-        <button type="submit">Verificar Documento</button>
-    </form>
+    </div>
 
-    <hr>
-
-    <?php if($resultado): ?>
-        <h3 class="<?= $tipo ?>"><?= $resultado ?></h3>
-    <?php else: ?>
-        <p style="color: #64748b; font-size:13px;">Seleccione un método para validar la autenticidad del documento.</p>
-    <?php endif; ?>
 </div>
 
 <script>
-function switchView(paneId, btn) {
-    document.querySelectorAll('.pane').forEach(p => p.classList.remove('active'));
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    
-    document.getElementById(paneId).classList.add('active');
-    btn.classList.add('active');
 
-    const txtInput = document.getElementById('hash_input');
-    if(paneId === 'text-pane') {
-        txtInput.setAttribute('required', 'required');
-    } else {
-        txtInput.removeAttribute('required');
+const inputPDF =
+    document.getElementById('pdf');
+
+const textoArchivo =
+    document.getElementById('textoArchivo');
+
+inputPDF.addEventListener('change', () => {
+
+    if(inputPDF.files.length > 0){
+
+        textoArchivo.innerHTML =
+
+            '<strong>' +
+
+            inputPDF.files[0].name +
+
+            '</strong>';
     }
-}
+});
+
+document
+.getElementById('formulario')
+.addEventListener('submit', async function(e){
+
+    e.preventDefault();
+
+    const resultado =
+        document.getElementById('resultado');
+
+    resultado.style.display = 'block';
+
+    resultado.className = '';
+
+    resultado.innerHTML = `
+
+        <div class="result-title">
+            ⏳ Verificando certificado...
+        </div>
+
+        Validando hash criptográfico
+        y autenticidad del documento.
+
+    `;
+
+    const formData = new FormData(this);
+
+    try{
+
+        const response = await fetch(
+            'verificar_pdf.php',
+            {
+                method:'POST',
+                body:formData
+            }
+        );
+
+        const data = await response.json();
+
+        if(data.success){
+
+            resultado.classList.add('ok');
+
+            resultado.innerHTML = `
+
+                <div class="result-title">
+
+                    ✅ CERTIFICADO VÁLIDO
+
+                </div>
+
+                <div class="info">
+
+                    <strong>Estudiante:</strong>
+                    ${data.usuario.nombre}<br>
+
+                    <strong>Correo:</strong>
+                    ${data.usuario.correo}<br>
+
+                    <strong>Carrera:</strong>
+                    ${data.usuario.carrera}<br>
+
+                    <strong>Semestre:</strong>
+                    ${data.usuario.semestre}<br>
+
+                    <strong>Sección:</strong>
+                    ${data.usuario.seccion}<br>
+
+                    <strong>Estado:</strong>
+                    ${data.estado}
+
+                </div>
+
+                <div class="hash">
+
+                    <strong>HASH SHA256:</strong><br>
+
+                    ${data.hash}
+
+                </div>
+            `;
+
+        }else{
+
+            resultado.classList.add('bad');
+
+            resultado.innerHTML = `
+
+                <div class="result-title">
+
+                    ❌ CERTIFICADO INVÁLIDO
+
+                </div>
+
+                ${data.message}
+            `;
+        }
+
+    }catch(error){
+
+        resultado.classList.add('bad');
+
+        resultado.innerHTML = `
+
+            <div class="result-title">
+
+                ❌ ERROR
+
+            </div>
+
+            ${error.message}
+
+        `;
+    }
+
+});
+
 </script>
+
 </body>
 </html>

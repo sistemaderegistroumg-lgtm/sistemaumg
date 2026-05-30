@@ -2,7 +2,9 @@
 session_start();
 require_once 'config.php';
 include 'mascota.php';
-requireSession('Catedrático');
+
+requireSession(3);
+
 $usuario = $_SESSION['usuario'];
 ?>
 <!DOCTYPE html>
@@ -52,7 +54,7 @@ $usuario = $_SESSION['usuario'];
 <body>
 <nav>
     <a class="nav-brand" href="menu_catedratico.php">
-        <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/3b/LogoUMG.png/320px-LogoUMG.png" alt="UMG">
+        <img src="logo_umg.png" alt="UMG">
         <span>UMG · Sistema de Asistencia</span>
     </a>
     <div class="nav-user">

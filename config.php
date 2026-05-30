@@ -1,12 +1,7 @@
 <?php
 
 // ============================================================
-// CONFIGURACIÓN GENERAL DEL SISTEMA
-// SUPABASE + PHP + PDO
-// ============================================================
-
-// ============================================================
-// INICIAR SESIÓN
+// SESIÓN
 // ============================================================
 
 if (session_status() === PHP_SESSION_NONE) {
@@ -14,7 +9,7 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 
 // ============================================================
-// MOSTRAR ERRORES
+// ERRORES (IMPORTANTE PARA JSON)
 // ============================================================
 
 error_reporting(E_ALL);
@@ -22,7 +17,7 @@ ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 
 // ============================================================
-// DATOS DE SUPABASE
+// SUPABASE CONFIG
 // ============================================================
 
 define('DB_HOST', 'aws-1-us-east-2.pooler.supabase.com');
@@ -31,6 +26,12 @@ define('DB_NAME', 'postgres');
 
 define('DB_USER', 'postgres.nzsoiurryswdsbcfcwsu');
 define('DB_PASS', '854384Est@*');
+
+// ============================================================
+// URL BASE DEL PROYECTO
+// ============================================================
+
+define('BASE_URL', 'http://localhost/proyecto_umg_2/');
 
 // ============================================================
 // CONEXIÓN PDO
@@ -45,27 +46,17 @@ function getDB() {
                ";dbname=" . DB_NAME .
                ";sslmode=require";
 
-        $pdo = new PDO(
-            $dsn,
-            DB_USER,
-            DB_PASS
-        );
-
-        // ====================================================
-        // CONFIGURACIONES PDO
-        // ====================================================
+        $pdo = new PDO($dsn, DB_USER, DB_PASS);
 
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-
         $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-
         $pdo->setAttribute(PDO::ATTR_EMULATE_PREPARES, false);
 
         return $pdo;
 
     } catch (PDOException $e) {
 
-        die("❌ ERROR REAL DE CONEXIÓN: " . $e->getMessage());
+        jsonResponse(false, "Error de conexión a base de datos");
     }
 }
 
@@ -74,36 +65,14 @@ function getDB() {
 // ============================================================
 
 function e($texto) {
-
     return htmlspecialchars($texto ?? '', ENT_QUOTES, 'UTF-8');
 }
 
 // ============================================================
-// VALIDAR SESIÓN
-// ============================================================
-
-function requireSession($rol = null) {
-
-    if (!isset($_SESSION['usuario'])) {
-
-        die("❌ Usuario no autenticado");
-    }
-
-    if ($rol && (!isset($_SESSION['rol']) || $_SESSION['rol'] !== $rol)) {
-
-        die("❌ Acceso denegado");
-    }
-}
-
-// ============================================================
-// RESPUESTA JSON
+// RESPUESTA JSON (ÚNICA SALIDA SEGURA)
 // ============================================================
 
 function jsonResponse($success, $message, $extra = []) {
-
-    // ========================================================
-    // LIMPIAR BUFFER
-    // ========================================================
 
     if (ob_get_length()) {
         ob_clean();
@@ -117,6 +86,24 @@ function jsonResponse($success, $message, $extra = []) {
     ], $extra));
 
     exit;
+}
+
+// ============================================================
+// VALIDAR SESIÓN (API SAFE)
+// ============================================================
+
+function requireSession($rol = null) {
+
+    if (!isset($_SESSION['usuario_id'])) {
+        jsonResponse(false, "No autenticado");
+    }
+
+    if ($rol !== null) {
+
+        if (!isset($_SESSION['rol']) || intval($_SESSION['rol']) !== intval($rol)) {
+            jsonResponse(false, "Acceso denegado");
+        }
+    }
 }
 
 ?>
